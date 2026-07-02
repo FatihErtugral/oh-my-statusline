@@ -1,0 +1,11 @@
+{
+  "name": "oh-my-statusline",
+  "description": "oh-my-zsh (robbyrussell) flavored status line for Claude Code: ➜ dir git:(branch) ✗, model, effort, and progress bars for context window + Claude plan rate limits (5h/7d). macOS & Linux.",
+  "version": "0.1.0",
+  "author": {
+    "name": "Fatih Ertugral",
+    "email": "fatihertugral89@gmail.com"
+  },
+  "license": "MIT",
+  "keywords": ["statusline", "oh-my-zsh", "robbyrussell", "usage", "rate-limits"]
+}

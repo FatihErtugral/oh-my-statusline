@@ -1,0 +1,14 @@
+{
+  "name": "oh-my-statusline",
+  "owner": {
+    "name": "Fatih Ertugral",
+    "email": "fatihertugral89@gmail.com"
+  },
+  "plugins": [
+    {
+      "name": "oh-my-statusline",
+      "source": "./",
+      "description": "oh-my-zsh flavored status line with context + plan usage progress bars (macOS & Linux)"
+    }
+  ]
+}
