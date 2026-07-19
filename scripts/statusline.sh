@@ -11,9 +11,9 @@
 # Responsive layout (flex-wrap): terminal width comes from $COLUMNS (Claude
 # Code sets it before running the script; /dev/tty is the fallback). When
 # everything fits on one line, it renders as one line. When it doesn't, the
-# bars wrap onto a second row; if that row still overflows it compacts
-# (narrower bars, countdowns dropped), and as a last resort renders plain
-# "label NN%" text.
+# bars wrap onto a second row; if that row still overflows the bars narrow,
+# then drop their glyphs entirely — the reset countdowns are always kept and
+# only vanish as the very last resort on extremely narrow terminals.
 #
 # Portability: macOS (bash 3.2) + Linux. No mapfile, no EPOCHSECONDS
 # dependency, no GNU-only flags. Requires jq (degrades to a dim hint if
@@ -203,7 +203,7 @@ if p7i=$(as_pct "$p7"); then
   add_bar 7d "$p7i" "$t"
 fi
 
-build_bars() { # $1=bar cells (0 = text only)  $2=full|compact -> sets BARS, BARS_W
+build_bars() { # $1=bar cells (0 = text only)  $2=full|bare -> sets BARS, BARS_W
   local barw=$1 mode=$2 i pct col right fill f e j
   BARS='' BARS_W=0
   for ((i = 0; i < nbars; i++)); do
@@ -236,7 +236,8 @@ build_bars() { # $1=bar cells (0 = text only)  $2=full|compact -> sets BARS, BAR
 
 # --- Layout (flex-wrap) --------------------------------------------------------
 # One line when it fits; otherwise the bars wrap onto a second row and
-# compact in steps until that row fits.
+# compact in steps until that row fits. Countdowns survive every step but
+# the last (bare) one.
 build_bars "$BARW" full
 
 if [ "$nbars" -eq 0 ]; then
@@ -244,7 +245,8 @@ if [ "$nbars" -eq 0 ]; then
 elif [ $((info_w + SEPW + BARS_W)) -le "$cols" ]; then
   printf '%s%s%s\033[0m' "$info" "$SEP" "$BARS"
 else
-  [ "$BARS_W" -gt "$cols" ] && build_bars 4 compact
-  [ "$BARS_W" -gt "$cols" ] && build_bars 0 compact
+  [ "$BARS_W" -gt "$cols" ] && build_bars 4 full
+  [ "$BARS_W" -gt "$cols" ] && build_bars 0 full
+  [ "$BARS_W" -gt "$cols" ] && build_bars 0 bare
   printf '%s\033[0m\n%s\033[0m' "$info" "$BARS"
 fi

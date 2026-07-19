@@ -5,7 +5,7 @@ oh-my-zsh (robbyrussell) flavored status line for Claude Code.
 ![oh-my-statusline — wide and narrow layouts](assets/screenshot.png)
 
 On narrow terminals the bars wrap onto a second row (flex-wrap style), then
-compact further until they fit — down to plain `label NN%` text.
+compact further until they fit — reset countdowns always stay visible.
 
 | Segment | What it shows |
 | --- | --- |
@@ -69,5 +69,6 @@ in (all other keys preserved), smoke-tests the script, and shows a sample render
   fewer segments, never garbage output.
 - Responsive layout reads the terminal width from `$COLUMNS` (exported by
   Claude Code v2.1.153+; `/dev/tty` fallback, then 80). Tiers: one line →
-  bars on a second row → compact bars without countdowns → plain `label NN%`
-  text.
+  bars on a second row → narrower bars → bar glyphs dropped. Reset
+  countdowns survive every tier and only vanish as the very last resort on
+  extremely narrow terminals.
