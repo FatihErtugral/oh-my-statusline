@@ -2,9 +2,10 @@
 
 oh-my-zsh (robbyrussell) flavored status line for Claude Code.
 
-```
-➜  focurise git:(master) ✗ │ Fable 5 │ xhigh │ ctx ▰▰▱▱▱▱ 33% │ 5h ▰▰▰▱▱▱ 45% (2h 3m) │ 7d ▰▰▱▱▱▱ 25% (5d 14h)
-```
+![oh-my-statusline — wide and narrow layouts](assets/screenshot.png)
+
+On narrow terminals the bars wrap onto a second row (flex-wrap style), then
+compact further until they fit — down to plain `label NN%` text.
 
 | Segment | What it shows |
 | --- | --- |
@@ -66,3 +67,7 @@ in (all other keys preserved), smoke-tests the script, and shows a sample render
   after the first API response — the usage bars simply stay hidden until then.
 - Every numeric is validated before rendering; malformed payloads degrade to
   fewer segments, never garbage output.
+- Responsive layout reads the terminal width from `$COLUMNS` (exported by
+  Claude Code v2.1.153+; `/dev/tty` fallback, then 80). Tiers: one line →
+  bars on a second row → compact bars without countdowns → plain `label NN%`
+  text.

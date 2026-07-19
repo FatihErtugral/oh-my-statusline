@@ -1,12 +1,19 @@
 #!/usr/bin/env bash
 # omz-statusline — oh-my-zsh (robbyrussell) flavored Claude Code status line.
 #
-#   ➜  dir git:(branch) ✗ │ Model │ effort │ ctx ▰▰▱▱▱▱ 33% │ 5h ▰▰▰▱▱▱ 45% (2h 3m) │ 7d ▰▰▱▱▱▱ 25% (5d 14h)
+#   ➜  dir git:(branch) ✗ │ Model │ effort │ ctx ▰▰▱▱▱ 33% │ 5h ▰▰▰▱▱ 45% (2h 3m) │ 7d ▰▱▱▱▱ 25% (5d 14h)
 #
 # Segments: robbyrussell dir+git · model · reasoning effort · then PROGRESS
 # BARS for context-window fill and Claude plan rate limits (5-hour session +
 # weekly — same data as /usage, read from the statusline stdin JSON
 # `rate_limits` field; nothing external is called).
+#
+# Responsive layout (flex-wrap): terminal width comes from $COLUMNS (Claude
+# Code sets it before running the script; /dev/tty is the fallback). When
+# everything fits on one line, it renders as one line. When it doesn't, the
+# bars wrap onto a second row; if that row still overflows it compacts
+# (narrower bars, countdowns dropped), and as a last resort renders plain
+# "label NN%" text.
 #
 # Portability: macOS (bash 3.2) + Linux. No mapfile, no EPOCHSECONDS
 # dependency, no GNU-only flags. Requires jq (degrades to a dim hint if
@@ -19,7 +26,9 @@
 #   - every numeric is validated digits-only before printing; garbage is
 #     dropped, never rendered
 #   - no emoji-width glyphs — only narrow-width chars
-#   - stderr silenced; output is one line, always ends with SGR reset
+#   - stderr silenced; every output line ends with SGR reset
+#   - visible widths are tracked as plain-character counts while building
+#     (never by re-measuring ANSI-colored strings)
 
 exec 2>/dev/null
 
@@ -103,28 +112,31 @@ time_left() { # $1=resets_at epoch (validated)
 
 DIM=238   # empty bar cells
 LBL=244   # labels / percentages
-BARW=6    # bar width in cells
+BARW=5    # bar width in cells (compact tier drops to 4)
 
-# Emit one bar segment: label, pct(0-100 validated), fill-color, right-label.
-bar_segment() {
-  local label=$1 pct=$2 col=$3 right=$4
-  [ "$pct" -gt 100 ] && pct=100
-  local fill=$(((pct * BARW + 50) / 100))
-  [ "$fill" -gt "$BARW" ] && fill=$BARW
-  local f='' e='' i
-  for ((i = 0; i < fill; i++)); do f+='▰'; done
-  for ((i = fill; i < BARW; i++)); do e+='▱'; done
-  printf '\033[38;5;%sm%s \033[38;5;%sm%s\033[38;5;%sm%s \033[38;5;%sm%s\033[0m' \
-    "$LBL" "$label" "$col" "$f" "$DIM" "$e" "$LBL" "${right:-${pct}%}"
-}
+# Terminal width: Claude Code exports COLUMNS before running the script
+# (v2.1.153+); /dev/tty is the fallback for older versions / manual runs.
+cols=${COLUMNS:-}
+case "$cols" in
+  '' | *[!0-9]*)
+    set -- $(stty size < /dev/tty)
+    cols=${2:-}
+    case "$cols" in '' | *[!0-9]*) cols=80 ;; esac
+    ;;
+esac
 
 SEP=$'\033[38;5;238m │ \033[0m'
-out=''
+SEPW=3    # plain-character width of SEP
 
-# Append a segment, prefixing SEP unless it's the first one.
-add_seg() {
-  [ -n "$out" ] && out+="$SEP"
-  out+="$1"
+# --- Info row: dir+git · model · effort ---------------------------------------
+info='' info_w=0
+add_info() { # $1=colored segment  $2=its plain-character width
+  if [ -n "$info" ]; then
+    info+="$SEP"
+    info_w=$((info_w + SEPW))
+  fi
+  info+="$1"
+  info_w=$((info_w + $2))
 }
 
 # 1) Dir + git in oh-my-zsh robbyrussell format: ➜  dir git:(branch) ✗
@@ -136,20 +148,23 @@ if [ "$cwd" != "-" ] && [ -n "$cwd" ]; then
     dname=${cwd##*/}
   fi
   seg=$(printf '\033[1;38;5;76m➜\033[0m  \033[38;5;44m%s\033[0m' "$dname")
+  segw=$((3 + ${#dname}))
   if git --no-optional-locks -C "$cwd" rev-parse --git-dir > /dev/null 2>&1; then
     branch=$(git --no-optional-locks -C "$cwd" symbolic-ref --short HEAD 2>/dev/null || git --no-optional-locks -C "$cwd" rev-parse --short HEAD 2>/dev/null)
     if [ -n "$branch" ]; then
       seg+=$(printf ' \033[38;5;33mgit:(\033[38;5;167m%s\033[38;5;33m)\033[0m' "$branch")
+      segw=$((segw + 7 + ${#branch}))
       if [ -n "$(git --no-optional-locks -C "$cwd" status --porcelain 2>/dev/null)" ]; then
         seg+=$(printf ' \033[38;5;178m✗\033[0m')
+        segw=$((segw + 2))
       fi
     fi
   fi
-  add_seg "$seg"
+  add_info "$seg" "$segw"
 fi
 
 # 2) Model (soft blue-gray).
-add_seg "$(printf '\033[38;5;109m%s\033[0m' "$model")"
+add_info "$(printf '\033[38;5;109m%s\033[0m' "$model")" "${#model}"
 
 # 3) Effort (muted plain text, lowercase — no emoji glyphs).
 if [ "$effort" != "-" ] && [ -n "$effort" ]; then
@@ -161,24 +176,75 @@ if [ "$effort" != "-" ] && [ -n "$effort" ]; then
     max) ecol=133 ;;
     *) ecol=244 ;;
   esac
-  add_seg "$(printf '\033[38;5;%sm%s\033[0m' "$ecol" "$effort")"
+  add_info "$(printf '\033[38;5;%sm%s\033[0m' "$ecol" "$effort")" "${#effort}"
 fi
 
-# 4) Context window bar.
+# --- Bars: collected as data first, rendered at whatever width the layout
+# --- tier allows (full -> compact -> text-only).
+nbars=0
+add_bar() { # $1=label $2=pct(validated) $3=countdown text ('' if unknown)
+  BL[nbars]=$1
+  BP[nbars]=$2
+  BT[nbars]=$3
+  nbars=$((nbars + 1))
+}
+
 if ci=$(as_pct "$used"); then
-  add_seg "$(bar_segment 'ctx' "$ci" "$(level_color "$ci")")"
+  add_bar ctx "$ci" ''
 fi
-
-# 5) Claude plan limits (same data as /usage): 5-hour session + weekly.
 if p5i=$(as_pct "$p5"); then
-  right5="${p5i}%"
-  r5i=$(as_int "$r5") && right5="${p5i}% ($(time_left "$r5i"))"
-  add_seg "$(bar_segment '5h' "$p5i" "$(level_color "$p5i")" "$right5")"
+  t=''
+  r5i=$(as_int "$r5") && t=$(time_left "$r5i")
+  add_bar 5h "$p5i" "$t"
 fi
 if p7i=$(as_pct "$p7"); then
-  right7="${p7i}%"
-  r7i=$(as_int "$r7") && right7="${p7i}% ($(time_left "$r7i"))"
-  add_seg "$(bar_segment '7d' "$p7i" "$(level_color "$p7i")" "$right7")"
+  t=''
+  r7i=$(as_int "$r7") && t=$(time_left "$r7i")
+  add_bar 7d "$p7i" "$t"
 fi
 
-printf '%s\033[0m' "$out"
+build_bars() { # $1=bar cells (0 = text only)  $2=full|compact -> sets BARS, BARS_W
+  local barw=$1 mode=$2 i pct col right fill f e j
+  BARS='' BARS_W=0
+  for ((i = 0; i < nbars; i++)); do
+    pct=${BP[i]}
+    col=$(level_color "$pct")
+    right="${pct}%"
+    if [ "$mode" = full ] && [ -n "${BT[i]}" ]; then
+      right="${pct}% (${BT[i]})"
+    fi
+    if [ -n "$BARS" ]; then
+      BARS+="$SEP"
+      BARS_W=$((BARS_W + SEPW))
+    fi
+    if [ "$barw" -gt 0 ]; then
+      fill=$(((pct * barw + 50) / 100))
+      [ "$fill" -gt "$barw" ] && fill=$barw
+      f='' e=''
+      for ((j = 0; j < fill; j++)); do f+='▰'; done
+      for ((j = fill; j < barw; j++)); do e+='▱'; done
+      BARS+=$(printf '\033[38;5;%sm%s \033[38;5;%sm%s\033[38;5;%sm%s \033[38;5;%sm%s\033[0m' \
+        "$LBL" "${BL[i]}" "$col" "$f" "$DIM" "$e" "$LBL" "$right")
+      BARS_W=$((BARS_W + ${#BL[i]} + 1 + barw + 1 + ${#right}))
+    else
+      BARS+=$(printf '\033[38;5;%sm%s \033[38;5;%sm%s\033[0m' \
+        "$LBL" "${BL[i]}" "$col" "$right")
+      BARS_W=$((BARS_W + ${#BL[i]} + 1 + ${#right}))
+    fi
+  done
+}
+
+# --- Layout (flex-wrap) --------------------------------------------------------
+# One line when it fits; otherwise the bars wrap onto a second row and
+# compact in steps until that row fits.
+build_bars "$BARW" full
+
+if [ "$nbars" -eq 0 ]; then
+  printf '%s\033[0m' "$info"
+elif [ $((info_w + SEPW + BARS_W)) -le "$cols" ]; then
+  printf '%s%s%s\033[0m' "$info" "$SEP" "$BARS"
+else
+  [ "$BARS_W" -gt "$cols" ] && build_bars 4 compact
+  [ "$BARS_W" -gt "$cols" ] && build_bars 0 compact
+  printf '%s\033[0m\n%s\033[0m' "$info" "$BARS"
+fi
