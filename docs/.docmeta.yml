@@ -1,0 +1,6 @@
+spec: docsys/0.4
+profile: project
+default_content_language: en
+# The name a consumer uses for this tree — `consume: [oh-my-statusline]` (D-075).
+namespace: oh-my-statusline
+created: 2026-09-03
