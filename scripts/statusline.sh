@@ -1,19 +1,23 @@
 #!/usr/bin/env bash
 # omz-statusline — oh-my-zsh (robbyrussell) flavored Claude Code status line.
 #
-#   ➜  dir git:(branch) ✗ │ Model │ effort │ ctx ▰▰▱▱▱ 33% │ 5h ▰▰▰▱▱ 45% (2h 3m) │ 7d ▰▱▱▱▱ 25% (5d 14h)
+#   ➜  dir git:(branch) ✗ │ Model │ effort │ ctx ▰▰▱▱▱ 33% │ 5h ▰▰▰▱▱ 45% 2ʰ 3ᵐ │ 7d ▰▱▱▱▱ 25% 5ᵈ 14ʰ │ you@example.com
 #
 # Segments: robbyrussell dir+git · model · reasoning effort · then PROGRESS
 # BARS for context-window fill and Claude plan rate limits (5-hour session +
 # weekly — same data as /usage, read from the statusline stdin JSON
-# `rate_limits` field; nothing external is called).
+# `rate_limits` field; nothing external is called) · and last, trailing the
+# whole line, the signed-in Claude account. The percentage is the loud part of
+# a bar: bold, in the level color, with the label dim and the countdown quieter
+# still — its unit letters are modifier letters the font draws small.
 #
 # Responsive layout (flex-wrap): terminal width comes from $COLUMNS (Claude
 # Code sets it before running the script; /dev/tty is the fallback). When
 # everything fits on one line, it renders as one line. When it doesn't, the
-# bars wrap onto a second row; if that row still overflows the bars narrow,
-# then drop their glyphs entirely — the reset countdowns are always kept and
-# only vanish as the very last resort on extremely narrow terminals.
+# account shortens to its local part and then drops, the bars wrap onto a
+# second row; if that row still overflows the bars narrow, then drop their
+# glyphs entirely — the reset countdowns are always kept and only vanish as the
+# very last resort on extremely narrow terminals.
 #
 # Portability: macOS (bash 3.2) + Linux. No mapfile, no EPOCHSECONDS
 # dependency, no GNU-only flags. Requires jq (degrades to a dim hint if
@@ -60,10 +64,12 @@ p5=${F[4]:--} r5=${F[5]:--} p7=${F[6]:--} r7=${F[7]:--}
 now=${EPOCHSECONDS:-$(date +%s)}
 
 # --- Daily auto-update (oh-my-zsh style) --------------------------------------
-# If this install is a git clone with a remote, fast-forward pull in the
-# background at most once every 24h. Stamp file holds the last-check epoch
-# (content-based — portable across GNU/BSD stat). Never blocks the render;
-# failures are silent (ff-only never rewrites local work).
+# If this install is a git clone with a remote, update in the background at
+# most once every 24h. Stamp file holds the last-check epoch (content-based —
+# portable across GNU/BSD stat). Never blocks the render; failures are silent.
+# scripts/update.sh decides what is safe: a managed clone is force-synced onto
+# origin (local changes saved as a patch), a dev checkout is fast-forwarded
+# only, and a plugin install is left to /plugin update.
 self=${BASH_SOURCE[0]:-$0}
 ROOT=$(cd "$(dirname "$self")/.." 2>/dev/null && pwd) || ROOT=''
 if [ -n "$ROOT" ] && [ -d "$ROOT/.git" ] && [ -n "$(git -C "$ROOT" config remote.origin.url 2>/dev/null)" ]; then
@@ -72,8 +78,30 @@ if [ -n "$ROOT" ] && [ -d "$ROOT/.git" ] && [ -n "$(git -C "$ROOT" config remote
   case "$last" in '' | *[!0-9]*) last=0 ;; esac
   if [ $((now - last)) -ge 86400 ]; then
     echo "$now" > "$stamp"
-    (git -C "$ROOT" pull --ff-only > /dev/null 2>&1 &)
+    if [ -f "$ROOT/scripts/update.sh" ]; then
+      (bash "$ROOT/scripts/update.sh" --quiet > /dev/null 2>&1 &)
+    else
+      (git -C "$ROOT" pull --ff-only > /dev/null 2>&1 &)
+    fi
   fi
+fi
+
+# --- Signed-in Claude account -------------------------------------------------
+# Which account this session is authenticated as. The statusline payload does
+# not carry it, so it is read from the Claude Code config file
+# ($CLAUDE_CONFIG_DIR/.claude.json, else ~/.claude.json) — a local read, no
+# network. OMS_ACCOUNT: email (default; full address, shortened to the local
+# part when the line is tight) | user (local part only) | off.
+acct='' acct_short=''
+acct_mode=${OMS_ACCOUNT:-email}
+if [ "$acct_mode" != off ]; then
+  cfg="$HOME/.claude.json"
+  [ -n "${CLAUDE_CONFIG_DIR:-}" ] && [ -f "$CLAUDE_CONFIG_DIR/.claude.json" ] && cfg="$CLAUDE_CONFIG_DIR/.claude.json"
+  [ -f "$cfg" ] && acct=$(jq -r '.oauthAccount.emailAddress // .oauthAccount.displayName // empty' "$cfg" 2>/dev/null)
+  # Plain-ASCII identifiers only; anything else is dropped, never rendered.
+  case $acct in '' | *[!A-Za-z0-9@._+-]*) acct='' ;; esac
+  acct_short=${acct%%@*}
+  [ "$acct_mode" = user ] && acct=$acct_short
 fi
 
 # Digits-only check; strips a decimal part ("23.5" -> "23"), clamps to 100.
@@ -93,9 +121,9 @@ as_int() { # $1=value -> echoes int, or nothing if not numeric
 
 # Muted color by fill level (green -> gold -> orange, NEVER red).
 level_color() { # $1=pct
-  if   [ "$1" -ge 80 ]; then echo 172   # soft orange
-  elif [ "$1" -ge 50 ]; then echo 178   # gold
-  else echo 76                          # green
+  if   [ "$1" -ge 80 ]; then echo "$ORANGE"
+  elif [ "$1" -ge 50 ]; then echo "$GOLD"
+  else echo "$GREEN"
   fi
 }
 
@@ -110,8 +138,32 @@ time_left() { # $1=resets_at epoch (validated)
   fi
 }
 
+# Palette. The fill scale is deliberately muted — sage, soft gold, terracotta —
+# because these colors sit on screen all day next to the text. Never red.
+GREEN=71  # calm green: low fill + the robbyrussell arrow
+GOLD=179  # soft gold: half full
+ORANGE=173 # muted terracotta: nearly full — as loud as this gets
+# "2h 57m" -> "2ʰ 57ᵐ". Modifier letters are what a terminal has instead of a
+# smaller font: the font draws them small, so the countdown stops competing
+# with the percentage. The ASCII form stays the one the layout MEASURES —
+# these glyphs are one cell but up to three bytes, and ${#var} counts bytes
+# under a C locale.
+small_units() { # $1=ascii countdown -> sets SMALL
+  local s=$1 c i
+  SMALL=''
+  for ((i = 0; i < ${#s}; i++)); do
+    c=${s:i:1}
+    case $c in
+      h) SMALL+='ʰ' ;;
+      m) SMALL+='ᵐ' ;;
+      d) SMALL+='ᵈ' ;;
+      *) SMALL+=$c ;;
+    esac
+  done
+}
+
 DIM=238   # empty bar cells
-LBL=244   # labels / percentages
+LBL=244   # labels and countdowns
 BARW=5    # bar width in cells (compact tier drops to 4)
 
 # Terminal width: Claude Code exports COLUMNS before running the script
@@ -129,15 +181,16 @@ SEP=$'\033[38;5;238m │ \033[0m'
 SEPW=3    # plain-character width of SEP
 
 # --- Info row: dir+git · model · effort ---------------------------------------
-info='' info_w=0
-add_info() { # $1=colored segment  $2=its plain-character width
-  if [ -n "$info" ]; then
-    info+="$SEP"
-    info_w=$((info_w + SEPW))
-  fi
-  info+="$1"
-  info_w=$((info_w + $2))
-}
+# Each piece is kept on its own with its plain width, so the row can be rebuilt
+# at a narrower tier when the terminal is small: it sheds the effort level,
+# then the git branch, then the model, and only then truncates the directory
+# name. The directory itself never disappears — it is what tells you where you
+# are, and a status line that cannot say that has nothing left to say.
+seg_dir='' seg_dir_w=0     # ➜  dir
+seg_git='' seg_git_w=0     # git:(branch) ✗ — glued to the dir, no separator
+seg_model='' seg_model_w=0
+seg_effort='' seg_effort_w=0
+dname=''
 
 # 1) Dir + git in oh-my-zsh robbyrussell format: ➜  dir git:(branch) ✗
 # arrow=green, dir=cyan, git:()=blue, branch=soft red (167, not harsh), ✗=gold.
@@ -147,37 +200,104 @@ if [ "$cwd" != "-" ] && [ -n "$cwd" ]; then
   else
     dname=${cwd##*/}
   fi
-  seg=$(printf '\033[1;38;5;76m➜\033[0m  \033[38;5;44m%s\033[0m' "$dname")
-  segw=$((3 + ${#dname}))
+  seg_dir=$(printf '\033[1;38;5;%sm➜\033[0m  \033[38;5;44m%s\033[0m' "$GREEN" "$dname")
+  seg_dir_w=$((3 + ${#dname}))
   if git --no-optional-locks -C "$cwd" rev-parse --git-dir > /dev/null 2>&1; then
     branch=$(git --no-optional-locks -C "$cwd" symbolic-ref --short HEAD 2>/dev/null || git --no-optional-locks -C "$cwd" rev-parse --short HEAD 2>/dev/null)
     if [ -n "$branch" ]; then
-      seg+=$(printf ' \033[38;5;33mgit:(\033[38;5;167m%s\033[38;5;33m)\033[0m' "$branch")
-      segw=$((segw + 7 + ${#branch}))
+      seg_git=$(printf ' \033[38;5;33mgit:(\033[38;5;167m%s\033[38;5;33m)\033[0m' "$branch")
+      seg_git_w=$((7 + ${#branch}))
       if [ -n "$(git --no-optional-locks -C "$cwd" status --porcelain 2>/dev/null)" ]; then
-        seg+=$(printf ' \033[38;5;178m✗\033[0m')
-        segw=$((segw + 2))
+        seg_git+=$(printf ' \033[38;5;%sm✗\033[0m' "$GOLD")
+        seg_git_w=$((seg_git_w + 2))
       fi
     fi
   fi
-  add_info "$seg" "$segw"
 fi
 
 # 2) Model (soft blue-gray).
-add_info "$(printf '\033[38;5;109m%s\033[0m' "$model")" "${#model}"
+seg_model=$(printf '\033[38;5;109m%s\033[0m' "$model")
+seg_model_w=${#model}
 
 # 3) Effort (muted plain text, lowercase — no emoji glyphs).
 if [ "$effort" != "-" ] && [ -n "$effort" ]; then
   case "$effort" in
-    low) ecol=71 ;;
+    low) ecol=$GREEN ;;
     medium) ecol=109 ;;
-    high) ecol=178 ;;
-    xhigh) ecol=172 ;;
+    high) ecol=$GOLD ;;
+    xhigh) ecol=$ORANGE ;;
     max) ecol=133 ;;
     *) ecol=244 ;;
   esac
-  add_info "$(printf '\033[38;5;%sm%s\033[0m' "$ecol" "$effort")" "${#effort}"
+  seg_effort=$(printf '\033[38;5;%sm%s\033[0m' "$ecol" "$effort")
+  seg_effort_w=${#effort}
 fi
+
+# 4) Account (soft mauve). It trails the whole status line — the end of the
+# single row, or the end of the wrapped bars row — so it is built as a trailing
+# element with its own separator, in two widths: full address and local part.
+acct_seg='' acct_seg_w=0 acct_seg_short='' acct_seg_short_w=0
+if [ -n "$acct" ]; then
+  acct_seg=$(printf '\033[38;5;139m%s\033[0m' "$acct")
+  acct_seg_w=${#acct}
+  acct_seg_short=$(printf '\033[38;5;139m%s\033[0m' "$acct_short")
+  acct_seg_short_w=${#acct_short}
+fi
+
+# Widest-first tiers the layout walks until the row fits.
+acct_tiers='email user none'
+[ "$acct_mode" = user ] && acct_tiers='user none'
+[ -n "$acct" ] || acct_tiers='none'
+
+set_acct() { # $1=email|user|none -> ACC (separator included), ACCW
+  case $1 in
+    email) ACC="$SEP$acct_seg" ACCW=$((SEPW + acct_seg_w)) ;;
+    user) ACC="$SEP$acct_seg_short" ACCW=$((SEPW + acct_seg_short_w)) ;;
+    *) ACC='' ACCW=0 ;;
+  esac
+}
+
+compose_info() { # $1..$3 = keep git / model / effort (1 or 0)
+  info=$seg_dir info_w=$seg_dir_w
+  if [ "$1" = 1 ] && [ -n "$seg_git" ]; then
+    info+=$seg_git
+    info_w=$((info_w + seg_git_w))
+  fi
+  if [ "$2" = 1 ]; then
+    [ -n "$info" ] && { info+="$SEP"; info_w=$((info_w + SEPW)); }
+    info+=$seg_model
+    info_w=$((info_w + seg_model_w))
+  fi
+  if [ "$3" = 1 ] && [ -n "$seg_effort" ]; then
+    [ -n "$info" ] && { info+="$SEP"; info_w=$((info_w + SEPW)); }
+    info+=$seg_effort
+    info_w=$((info_w + seg_effort_w))
+  fi
+}
+
+fit_info() { # shrink the info row a tier at a time until it fits $cols
+  local n
+  compose_info 1 1 1
+  [ "$info_w" -le "$cols" ] && return
+  compose_info 1 1 0
+  [ "$info_w" -le "$cols" ] && return
+  compose_info 0 1 0
+  [ "$info_w" -le "$cols" ] && return
+  compose_info 0 0 0
+  [ "$info_w" -le "$cols" ] && return
+  # Last resort: cut the directory name. Only for a plain-ASCII name — slicing
+  # a multibyte name by bytes (what ${x:0:n} does in a C locale) would emit a
+  # broken sequence, and a corrupted glyph is worse than an overflowing row.
+  case $dname in
+    '' | *[!A-Za-z0-9._@+-]*) return ;;
+  esac
+  n=$((cols - 4))
+  [ "$n" -lt 1 ] && return
+  [ "$n" -ge ${#dname} ] && return
+  seg_dir=$(printf '\033[1;38;5;%sm➜\033[0m  \033[38;5;44m%s…\033[0m' "$GREEN" "${dname:0:n}")
+  seg_dir_w=$((3 + n + 1))
+  compose_info 0 0 0
+}
 
 # --- Bars: collected as data first, rendered at whatever width the layout
 # --- tier allows (full -> compact -> text-only).
@@ -203,15 +323,19 @@ if p7i=$(as_pct "$p7"); then
   add_bar 7d "$p7i" "$t"
 fi
 
-build_bars() { # $1=bar cells (0 = text only)  $2=full|bare -> sets BARS, BARS_W
-  local barw=$1 mode=$2 i pct col right fill f e j
+build_bars() { # $1=bar cells (0 = no glyph bar)  $2=full|bare -> BARS, BARS_W
+  local barw=$1 mode=$2 i pct col lab num rest restw bar fill j
   BARS='' BARS_W=0
   for ((i = 0; i < nbars; i++)); do
     pct=${BP[i]}
     col=$(level_color "$pct")
-    right="${pct}%"
+    lab=${BL[i]}
+    num="${pct}%"
+    rest='' restw=0
     if [ "$mode" = full ] && [ -n "${BT[i]}" ]; then
-      right="${pct}% (${BT[i]})"
+      small_units "${BT[i]}"
+      rest=" $SMALL"
+      restw=$((1 + ${#BT[i]}))
     fi
     if [ -n "$BARS" ]; then
       BARS+="$SEP"
@@ -220,33 +344,69 @@ build_bars() { # $1=bar cells (0 = text only)  $2=full|bare -> sets BARS, BARS_W
     if [ "$barw" -gt 0 ]; then
       fill=$(((pct * barw + 50) / 100))
       [ "$fill" -gt "$barw" ] && fill=$barw
-      f='' e=''
-      for ((j = 0; j < fill; j++)); do f+='▰'; done
-      for ((j = fill; j < barw; j++)); do e+='▱'; done
-      BARS+=$(printf '\033[38;5;%sm%s \033[38;5;%sm%s\033[38;5;%sm%s \033[38;5;%sm%s\033[0m' \
-        "$LBL" "${BL[i]}" "$col" "$f" "$DIM" "$e" "$LBL" "$right")
-      BARS_W=$((BARS_W + ${#BL[i]} + 1 + barw + 1 + ${#right}))
+      bar=''
+      for ((j = 0; j < barw; j++)); do
+        if [ "$j" -lt "$fill" ]; then bar+='▰'; else bar+='▱'; fi
+      done
+      # The bar carries the level color across both glyphs — ▰ and ▱ already
+      # separate full from empty, so the color is free to mean level alone.
+      BARS+=$(printf '\033[38;5;%sm%s \033[38;5;%sm%s \033[1;38;5;%sm%s\033[0m\033[38;5;%sm%s\033[0m' \
+        "$LBL" "$lab" "$col" "$bar" "$col" "$num" "$LBL" "$rest")
+      BARS_W=$((BARS_W + ${#lab} + 1 + barw + 1 + ${#num} + restw))
     else
-      BARS+=$(printf '\033[38;5;%sm%s \033[38;5;%sm%s\033[0m' \
-        "$LBL" "${BL[i]}" "$col" "$right")
-      BARS_W=$((BARS_W + ${#BL[i]} + 1 + ${#right}))
+      BARS+=$(printf '\033[38;5;%sm%s \033[1;38;5;%sm%s\033[0m\033[38;5;%sm%s\033[0m' \
+        "$LBL" "$lab" "$col" "$num" "$LBL" "$rest")
+      BARS_W=$((BARS_W + ${#lab} + 1 + ${#num} + restw))
     fi
   done
 }
 
 # --- Layout (flex-wrap) --------------------------------------------------------
-# One line when it fits; otherwise the bars wrap onto a second row and
-# compact in steps until that row fits. Countdowns survive every step but
-# the last (bare) one.
+# One line when it fits. The account is the first thing to give way — full
+# address, then local part, then gone — before the bars wrap onto a second row
+# and compact in steps. Countdowns survive every step but the last (bare) one.
 build_bars "$BARW" full
+compose_info 1 1 1
 
 if [ "$nbars" -eq 0 ]; then
-  printf '%s\033[0m' "$info"
-elif [ $((info_w + SEPW + BARS_W)) -le "$cols" ]; then
-  printf '%s%s%s\033[0m' "$info" "$SEP" "$BARS"
+  fit_info
+  for t in $acct_tiers; do
+    set_acct "$t"
+    [ $((info_w + ACCW)) -le "$cols" ] && break
+  done
+  printf '%s%s\033[0m' "$info" "$ACC"
 else
-  [ "$BARS_W" -gt "$cols" ] && build_bars 4 full
-  [ "$BARS_W" -gt "$cols" ] && build_bars 0 full
-  [ "$BARS_W" -gt "$cols" ] && build_bars 0 bare
-  printf '%s\033[0m\n%s\033[0m' "$info" "$BARS"
+  one_line=0
+  for t in $acct_tiers; do
+    set_acct "$t"
+    if [ $((info_w + SEPW + BARS_W + ACCW)) -le "$cols" ]; then
+      one_line=1
+      break
+    fi
+  done
+
+  if [ "$one_line" -eq 1 ]; then
+    printf '%s%s%s%s\033[0m' "$info" "$SEP" "$BARS" "$ACC"
+  else
+    # Two rows: info above, bars (still trailed by the account while it fits)
+    # below — narrowing the bars only after the account is gone. The info row
+    # gets its own shrink ladder; on one line it is never trimmed, because
+    # wrapping is always the better trade there.
+    fit_info
+    fit=0
+    for t in $acct_tiers; do
+      set_acct "$t"
+      if [ $((BARS_W + ACCW)) -le "$cols" ]; then
+        fit=1
+        break
+      fi
+    done
+    if [ "$fit" -eq 0 ]; then
+      set_acct none
+      [ "$BARS_W" -gt "$cols" ] && build_bars 4 full
+      [ "$BARS_W" -gt "$cols" ] && build_bars 0 full
+      [ "$BARS_W" -gt "$cols" ] && build_bars 0 bare
+    fi
+    printf '%s\033[0m\n%s%s\033[0m' "$info" "$BARS" "$ACC"
+  fi
 fi
