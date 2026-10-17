@@ -109,8 +109,11 @@ fi
 
 cp "$SETTINGS" "$SETTINGS.bak"
 tmp=$(mktemp)
+# refreshInterval re-runs the script on a timer: the session counts change
+# while this session sits idle, and events alone would never redraw them. An
+# interval the user already set is kept.
 jq --arg cmd "bash \"$SCRIPT\"" \
-  '.statusLine = {type: "command", command: $cmd}' "$SETTINGS" > "$tmp"
+  '.statusLine = {type: "command", command: $cmd, refreshInterval: (.statusLine.refreshInterval // 5)}' "$SETTINGS" > "$tmp"
 mv "$tmp" "$SETTINGS"
 
 say "statusLine written to $SETTINGS (backup: settings.json.bak)"

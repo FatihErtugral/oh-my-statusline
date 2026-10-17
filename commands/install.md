@@ -16,11 +16,12 @@ Steps:
 ```json
 "statusLine": {
   "type": "command",
-  "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/statusline.sh\""
+  "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/statusline.sh\"",
+  "refreshInterval": 5
 }
 ```
 
-Write the RESOLVED absolute path (the literal value of `${CLAUDE_PLUGIN_ROOT}` shown above), not the variable — settings.json does not expand plugin variables.
+Write the RESOLVED absolute path (the literal value of `${CLAUDE_PLUGIN_ROOT}` shown above), not the variable — settings.json does not expand plugin variables. If the old `statusLine` already had a `refreshInterval`, keep that value. The interval exists so the open-session counts stay current while the session is idle.
 
 4. If a previous `statusLine` existed, show the user the old value before replacing and confirm.
 5. Confirm the change by piping a minimal payload through the script:
